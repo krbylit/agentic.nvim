@@ -41,7 +41,7 @@ end
 --- @field permission_manager agentic.ui.PermissionManager
 --- @field status_animation agentic.ui.StatusAnimation
 --- @field current_provider string
---- @field file_list agentic.ui.FileList
+--- @field context_list agentic.ui.ContextList
 --- @field code_selection agentic.ui.CodeSelection
 --- @field image_manager agentic.ui.ImageManager
 --- @field slash_commands agentic.acp.SlashCommands
@@ -58,7 +58,7 @@ function SessionManager:new(tab_page_id)
     local StatusAnimation = require("agentic.ui.status_animation")
     local SlashCommands = require("agentic.acp.slash_commands")
     local AgentModes = require("agentic.acp.agent_modes")
-    local FileList = require("agentic.ui.file_list")
+    local ContextList = require("agentic.ui.context_list")
     local CodeSelection = require("agentic.ui.code_selection")
     local ImageManager = require("agentic.ui.image_manager")
     local FilePicker = require("agentic.ui.file_picker")
@@ -98,15 +98,21 @@ function SessionManager:new(tab_page_id)
         self:_handle_mode_change(mode_id)
     end)
 
-    self.file_list = FileList:new(self.widget.buf_nrs.files, function(file_list)
-        if file_list:is_empty() then
-            self.widget:close_files_window()
-            self.widget:move_cursor_to(self.widget.win_nrs.input)
-        else
-            self.widget.headers.files.suffix = tostring(#file_list:get_files())
-            self.widget:render_header("files")
+    self.context_list = ContextList:new(
+        self.widget.buf_nrs.files,
+        function(context_list)
+            if context_list:is_empty() then
+                self.widget:close_files_window()
+                self.widget:move_cursor_to(self.widget.win_nrs.input)
+            else
+                local file_count = #context_list:get_files()
+                local image_count = #context_list:get_images()
+                local total = file_count + image_count
+                self.widget.headers.files.suffix = tostring(total)
+                self.widget:render_header("files")
+            end
         end
-    end)
+    )
 
     self.code_selection = CodeSelection:new(
         self.widget.buf_nrs.code,
@@ -125,10 +131,23 @@ function SessionManager:new(tab_page_id)
     self.image_manager = ImageManager:new(
         self.widget.buf_nrs.input,
         function(image_manager)
-            -- Could add header update here if desired
-            Logger.debug(
-                string.format("Image manager has %d images", #image_manager:get_images())
-            )
+            -- Add the latest image to context list
+            local images = image_manager:get_images()
+            if #images > 0 then
+                local latest_image = images[#images]
+                self.context_list:add_image(
+                    latest_image.data,
+                    latest_image.mimeType
+                )
+
+                -- Open the context window if widget is open
+                if self.widget:is_open() then
+                    self.widget:show({ focus_prompt = false })
+                end
+
+                -- Clear image from image_manager after adding to context
+                image_manager:clear()
+            end
         end
     )
 
@@ -239,19 +258,6 @@ function SessionManager:_handle_input_submit(input_text)
         text = input_text,
     })
 
-    -- Add images if any
-    if not self.image_manager:is_empty() then
-        local images = self.image_manager:get_images()
-        for _, image_data in ipairs(images) do
-            table.insert(prompt, {
-                type = "image",
-                data = image_data.data,
-                mimeType = image_data.mimeType,
-            })
-        end
-        -- Clear images after adding to prompt
-        self.image_manager:clear()
-    end
 
     --- The message to be written to the chat widget
     local message_lines = {
@@ -326,23 +332,40 @@ function SessionManager:_handle_input_submit(input_text)
         end
     end
 
-    if not self.file_list:is_empty() then
-        table.insert(message_lines, "\n- **Referenced files**:")
+    if not self.context_list:is_empty() then
+        local files = self.context_list:get_files()
+        local images = self.context_list:get_images()
 
-        local files = self.file_list:get_files()
-        self.file_list:clear()
-
-        for _, file_path in ipairs(files) do
-            table.insert(
-                prompt,
-                self.agent:create_resource_link_content(file_path)
-            )
-
-            table.insert(
-                message_lines,
-                string.format("  - @%s", FileSystem.to_smart_path(file_path))
-            )
+        if #files > 0 then
+            table.insert(message_lines, "\n- **Referenced files**:")
+            for _, file_path in ipairs(files) do
+                table.insert(
+                    prompt,
+                    self.agent:create_resource_link_content(file_path)
+                )
+                table.insert(
+                    message_lines,
+                    string.format("  - @%s", FileSystem.to_smart_path(file_path))
+                )
+            end
         end
+
+        if #images > 0 then
+            table.insert(message_lines, "\n- **Attached images**:")
+            for i, image_data in ipairs(images) do
+                table.insert(prompt, {
+                    type = "image",
+                    data = image_data.data,
+                    mimeType = image_data.mimeType,
+                })
+                table.insert(
+                    message_lines,
+                    string.format("  - [Image #%d]", i)
+                )
+            end
+        end
+
+        self.context_list:clear()
     end
 
     table.insert(
@@ -538,7 +561,7 @@ function SessionManager:_cancel_session()
         -- Otherwise, it clears selections and files when opening for the first time
         self.agent:cancel_session(self.session_id)
         self.widget:clear()
-        self.file_list:clear()
+        self.context_list:clear()
         self.code_selection:clear()
     end
 
@@ -571,7 +594,7 @@ function SessionManager:add_file_to_session(buf)
     local bufnr = buf and vim.fn.bufnr(buf) or 0
     local buf_path = vim.api.nvim_buf_get_name(bufnr)
 
-    return self.file_list:add(buf_path)
+    return self.context_list:add_file(buf_path)
 end
 
 function SessionManager:_get_system_info()

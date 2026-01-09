@@ -27,8 +27,8 @@ local WINDOW_HEADERS = {
         persistent = "d: remove block",
     },
     files = {
-        title = " Referenced Files",
-        persistent = "d: remove file",
+        title = " Context",
+        persistent = "d: remove item",
     },
     todos = {
         title = " TODO Items",

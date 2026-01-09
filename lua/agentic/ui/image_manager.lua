@@ -1,9 +1,6 @@
 local Logger = require("agentic.utils.logger")
 local BufHelpers = require("agentic.utils.buf_helpers")
 
---- Image indicator format string
-local IMAGE_INDICATOR_FORMAT = "[Image #%d]"
-
 --- @class agentic.ui.ImageData
 --- @field data string Base64 encoded image data
 --- @field mimeType string e.g., "image/png", "image/jpeg"
@@ -175,60 +172,15 @@ function ImageManager:paste_from_clipboard()
         mimeType = mime_type,
     })
 
-    -- Add visual indicator to buffer
-    self:_add_indicator()
+    Logger.notify(
+        string.format("Image added (%d total)", #self._images),
+        vim.log.levels.INFO
+    )
 
     -- Trigger change callback
     if self._on_change then
         self._on_change(self)
     end
-
-    Logger.notify(
-        string.format("Image added (%d total)", #self._images),
-        vim.log.levels.INFO
-    )
-end
-
---- Add visual indicator to input buffer
-function ImageManager:_add_indicator()
-    BufHelpers.with_modifiable(self._bufnr, function(bufnr)
-        -- Find window displaying this buffer
-        local winid = vim.fn.bufwinid(bufnr)
-        if winid == -1 then
-            -- Buffer not visible, append to end
-            local line_count = vim.api.nvim_buf_line_count(bufnr)
-            local last_line = vim.api.nvim_buf_get_lines(bufnr, -2, -1, false)[1]
-                or ""
-            local indicator = " "
-                .. string.format(IMAGE_INDICATOR_FORMAT, #self._images)
-            vim.api.nvim_buf_set_lines(
-                bufnr,
-                line_count - 1,
-                line_count,
-                false,
-                { last_line .. indicator }
-            )
-            return
-        end
-
-        -- Get cursor position from the correct window
-        local cursor = vim.api.nvim_win_get_cursor(winid)
-        local line = cursor[1] - 1
-        local col = cursor[2]
-
-        -- Insert image indicator text
-        local current_line = vim.api.nvim_buf_get_lines(
-            bufnr,
-            line,
-            line + 1,
-            false
-        )[1] or ""
-        local new_line = current_line:sub(1, col)
-            .. string.format(IMAGE_INDICATOR_FORMAT, #self._images)
-            .. current_line:sub(col + 1)
-
-        vim.api.nvim_buf_set_lines(bufnr, line, line + 1, false, { new_line })
-    end)
 end
 
 --- Get all images
